@@ -2,12 +2,12 @@ package bindings
 
 import (
 	"context"
-	"fmt"
 	"get-started/internal/database"
 	"get-started/internal/domain/entities"
 	"get-started/internal/domain/models"
-
-	"github.com/jackc/pgx/v5"
+	"log"
+	"strings"
+	"time"
 )
 
 type Auth struct {
@@ -21,34 +21,35 @@ func (a *Auth) Startup(ctx context.Context) {
 }
 
 func (a *Auth) Login(username, password string) models.LoginResult {
-	canAcess, err := a.MakeAuth(entities.User{
+	ok, err := a.MakeAuth(entities.User{
 		Username: username,
 		Password: password,
 	})
 	if err != nil {
-		fmt.Println(err)
+		log.Printf("[auth] erro: %v", err)
 	}
-
-	if *canAcess {
-		return models.LoginResult{Ok: *canAcess, Message: "Login successful"}
+	if ok {
+		return models.LoginResult{Ok: true, Message: "Login successful"}
 	}
-	return models.LoginResult{Ok: *canAcess, Message: "Invalid credentials"}
+	return models.LoginResult{Ok: false, Message: "Invalid credentials"}
 }
 
-func (a *Auth) MakeAuth(user entities.User) (*bool, error) {
-	canAcess := false
-	sql := fmt.Sprintf(`select username from users where exists (select 1 from users where username like '%v'`, user.Username)
+func (a *Auth) MakeAuth(user entities.User) (bool, error) {
+	u := strings.TrimSpace(user.Username)
+	p := user.Password
 
-	rows, err := database.DB.Query(context.Background(), sql)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	users, err := pgx.CollectRows(rows, pgx.RowToStructByName[entities.User])
-	if err != nil {
-		return &canAcess, err
+	const q = `
+		SELECT EXISTS(
+			SELECT 1 FROM users
+			WHERE username = $1 AND password = $2
+		);
+	`
+	var ok bool
+	if err := database.DB.QueryRow(ctx, q, u, p).Scan(&ok); err != nil {
+		return false, err
 	}
-	canAcess = len(users) > 0
-	return &canAcess, nil
+	return ok, nil
 }
